@@ -257,8 +257,8 @@ app.put("/api/menu", requireAuth, requirePermission("manageMenu"), ah(async (req
   const isFiniteNonNegative = (n) => typeof n === "number" && isFinite(n) && n >= 0;
 
   for (const item of req.body) {
-    if (!item || typeof item !== "object" || !item.id || !item.name || !item.category) {
-      return res.status(400).json({ error: "Each menu item needs an id, name, and category." });
+    if (!item || typeof item !== "object" || !item.id || typeof item.name !== "string" || !item.name.trim() || !item.category) {
+      return res.status(400).json({ error: "Each menu item needs an id, a non-empty name, and a category." });
     }
     if (item.sizes) {
       if (!Array.isArray(item.sizes) || item.sizes.length === 0) {
@@ -267,6 +267,9 @@ app.put("/api/menu", requireAuth, requirePermission("manageMenu"), ah(async (req
       for (const s of item.sizes) {
         if (!s || typeof s.label !== "string" || !isFiniteNonNegative(s.price)) {
           return res.status(400).json({ error: `"${item.name}" has an invalid price for one of its sizes.` });
+        }
+        if (s.soldOut !== undefined && typeof s.soldOut !== "boolean") {
+          return res.status(400).json({ error: `"${item.name}" has an invalid sold-out flag for one of its sizes.` });
         }
       }
     } else if (!isFiniteNonNegative(item.price)) {

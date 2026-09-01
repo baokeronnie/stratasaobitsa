@@ -800,8 +800,26 @@ function MenuView({ menu, activeCategory, setActiveCategory, expandedItem, setEx
 function MenuItemCard({ item, canAddOns, expanded, onExpand, onAdd }) {
   const [qty, setQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState([]);
-  const [selectedSize, setSelectedSize] = useState(item.sizes ? item.sizes[0] : null);
   const hasSizes = Boolean(item.sizes);
+  const availableSizes = hasSizes ? item.sizes.filter((s) => !s.soldOut) : null;
+  const allSizesSoldOut = hasSizes && availableSizes.length === 0;
+  const [selectedSize, setSelectedSize] = useState(
+    hasSizes ? availableSizes[0] || item.sizes[0] : null
+  );
+
+  // If the menu updates (e.g. an admin marks the currently-selected size sold
+  // out) while a customer has this card open, fall back to another available
+  // size rather than leaving a now-invalid selection picked.
+  useEffect(() => {
+    if (!hasSizes) return;
+    const stillValid = item.sizes.some((s) => s.label === selectedSize?.label && !s.soldOut);
+    if (!stillValid) {
+      setSelectedSize(item.sizes.find((s) => !s.soldOut) || item.sizes[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.sizes]);
+
+  const isSoldOut = item.soldOut || allSizesSoldOut;
 
   const toggleAddon = (addon) => {
     setSelectedAddons((s) =>
@@ -811,12 +829,13 @@ function MenuItemCard({ item, canAddOns, expanded, onExpand, onAdd }) {
 
   const unitPrice = hasSizes ? selectedSize.price : item.price;
   const runningTotal = (unitPrice + selectedAddons.reduce((s, a) => s + a.price, 0)) * qty;
+  const sizesForPricing = hasSizes ? (availableSizes.length > 0 ? availableSizes : item.sizes) : null;
   const displayPrice = hasSizes
-    ? `From ${money(Math.min(...item.sizes.map((s) => s.price)))}`
+    ? `From ${money(Math.min(...sizesForPricing.map((s) => s.price)))}`
     : money(item.price);
 
   return (
-    <div className={`sb-card ${item.soldOut ? "sb-card-soldout" : ""}`}>
+    <div className={`sb-card ${isSoldOut ? "sb-card-soldout" : ""}`}>
       <div className="sb-card-top">
         <div>
           <h3 className="sb-card-name">{item.name}</h3>
@@ -825,7 +844,7 @@ function MenuItemCard({ item, canAddOns, expanded, onExpand, onAdd }) {
         <span className="sb-card-price">{displayPrice}</span>
       </div>
 
-      {item.soldOut ? (
+      {isSoldOut ? (
         <div className="sb-soldout-tag">Sold out today</div>
       ) : !expanded ? (
         <button className="sb-btn-outline-sm" onClick={onExpand}>
@@ -838,14 +857,19 @@ function MenuItemCard({ item, canAddOns, expanded, onExpand, onAdd }) {
               <span className="sb-addons-label">Choose size</span>
               <div className="sb-addons-list">
                 {item.sizes.map((s) => (
-                  <label key={s.label} className={`sb-size-chip ${selectedSize.label === s.label ? "active" : ""}`}>
+                  <label
+                    key={s.label}
+                    className={`sb-size-chip ${selectedSize?.label === s.label ? "active" : ""} ${s.soldOut ? "sb-size-chip-disabled" : ""}`}
+                  >
                     <input
                       type="radio"
                       name={`size-${item.id}`}
-                      checked={selectedSize.label === s.label}
-                      onChange={() => setSelectedSize(s)}
+                      checked={selectedSize?.label === s.label}
+                      disabled={s.soldOut}
+                      onChange={() => !s.soldOut && setSelectedSize(s)}
                     />
-                    {s.label} <span className="sb-addon-price">{money(s.price)}</span>
+                    {s.label}{" "}
+                    <span className="sb-addon-price">{s.soldOut ? "Sold out" : money(s.price)}</span>
                   </label>
                 ))}
               </div>
@@ -1459,6 +1483,11 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
     setDrafts((prev) => prev.map((item) => (item.id === id ? { ...item, price: value } : item)));
   };
 
+  const updateName = (id, value) => {
+    setDirty(true);
+    setDrafts((prev) => prev.map((item) => (item.id === id ? { ...item, name: value } : item)));
+  };
+
   const updateSizePrice = (id, sizeIdx, value) => {
     setDirty(true);
     setDrafts((prev) =>
@@ -1470,7 +1499,19 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
     );
   };
 
+  const updateSizeSoldOut = (id, sizeIdx, soldOut) => {
+    setDirty(true);
+    setDrafts((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? { ...item, sizes: item.sizes.map((s, i) => (i === sizeIdx ? { ...s, soldOut } : s)) }
+          : item
+      )
+    );
+  };
+
   const hasInvalid = drafts.some((item) => {
+    if (!item.name || !item.name.trim()) return true;
     if (item.price !== undefined && (item.price === "" || isNaN(Number(item.price)) || Number(item.price) < 0)) return true;
     if (item.sizes && item.sizes.some((s) => s.price === "" || isNaN(Number(s.price)) || Number(s.price) < 0)) return true;
     return false;
@@ -1481,8 +1522,9 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
     setSaving(true);
     const cleaned = drafts.map((item) => ({
       ...item,
+      name: item.name.trim(),
       price: item.price !== undefined ? Number(item.price) : undefined,
-      sizes: item.sizes ? item.sizes.map((s) => ({ ...s, price: Number(s.price) })) : undefined,
+      sizes: item.sizes ? item.sizes.map((s) => ({ ...s, price: Number(s.price), soldOut: !!s.soldOut })) : undefined,
     }));
     const ok = await onSaveMenu(cleaned);
     setSaving(false);
@@ -1498,8 +1540,9 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
     <>
       <h4 className="sb-admin-subhead">Menu &amp; Pricing</h4>
       <p className="sb-admin-hint">
-        Update prices below, then hit "Save Changes" — updates apply instantly across the site for every
-        customer browsing the menu. Toggling availability saves right away; price edits wait for you to save.
+        Update names, prices, or availability below, then hit "Save Changes" — updates apply instantly
+        across the site for every customer browsing the menu. The overall "Available/Sold out" toggle
+        saves right away; everything else waits for you to save.
       </p>
 
       <div className="sb-menu-editor-actions">
@@ -1509,8 +1552,8 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
         <button className="sb-btn-outline-sm" onClick={handleReset} disabled={!dirty || saving}>
           <RotateCcw size={13} /> Discard changes
         </button>
-        {dirty && !hasInvalid && <span className="sb-menu-dirty-note">You have unsaved price changes.</span>}
-        {hasInvalid && <span className="sb-menu-dirty-note sb-menu-invalid-note">Fix invalid prices before saving.</span>}
+        {dirty && !hasInvalid && <span className="sb-menu-dirty-note">You have unsaved changes.</span>}
+        {hasInvalid && <span className="sb-menu-dirty-note sb-menu-invalid-note">Fix the highlighted fields before saving.</span>}
       </div>
 
       {CATEGORIES.map((cat) => {
@@ -1520,10 +1563,17 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
           <div key={cat.id} className="sb-menu-edit-category">
             <h5 className="sb-menu-edit-category-title">{cat.label}</h5>
             <div className="sb-admin-menu-list">
-              {items.map((m) => (
+              {items.map((m) => {
+                const nameInvalid = !m.name || !m.name.trim();
+                return (
                 <div className="sb-menu-edit-row" key={m.id}>
                   <div className="sb-menu-edit-row-top">
-                    <span className="sb-menu-edit-name">{m.name}</span>
+                    <input
+                      className={`sb-name-input ${nameInvalid ? "sb-input-invalid" : ""}`}
+                      value={m.name}
+                      onChange={(e) => updateName(m.id, e.target.value)}
+                      placeholder="Item name"
+                    />
                     <button
                       className={`sb-toggle ${!m.soldOut ? "on" : ""}`}
                       onClick={() => onToggleSoldOut(m.id)}
@@ -1535,7 +1585,7 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
                   {m.sizes ? (
                     <div className="sb-size-price-grid">
                       {m.sizes.map((s, i) => (
-                        <label className="sb-price-field" key={s.label}>
+                        <div className="sb-price-field" key={s.label}>
                           <span>{s.label}</span>
                           <div className="sb-price-input-wrap">
                             <span className="sb-price-currency">P</span>
@@ -1548,7 +1598,14 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
                               onChange={(e) => updateSizePrice(m.id, i, e.target.value)}
                             />
                           </div>
-                        </label>
+                          <button
+                            type="button"
+                            className={`sb-size-toggle ${!s.soldOut ? "on" : ""}`}
+                            onClick={() => updateSizeSoldOut(m.id, i, !s.soldOut)}
+                          >
+                            {s.soldOut ? "Sold out" : "Available"}
+                          </button>
+                        </div>
                       ))}
                     </div>
                   ) : (
@@ -1568,7 +1625,7 @@ function MenuPricingEditor({ menu, onToggleSoldOut, onSaveMenu }) {
                     </label>
                   )}
                 </div>
-              ))}
+              );})}
             </div>
           </div>
         );
@@ -2423,8 +2480,10 @@ img { max-width: 100%; display: block; }
 .sb-menu-edit-category-title { font-family: 'Oswald', sans-serif; text-transform: uppercase; letter-spacing: 1px; font-size: 12.5px; color: rgba(250,245,232,0.6); margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
 .sb-menu-edit-row { background: var(--teal-plank); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .sb-menu-edit-row-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.sb-menu-edit-name { font-family: 'Oswald', sans-serif; font-size: 13.5px; color: var(--offwhite); }
-.sb-size-price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.sb-name-input { flex: 1; min-width: 0; background: rgba(255,255,255,0.06); border: 1.5px solid rgba(250,245,232,0.2); border-radius: 6px; color: var(--offwhite); font-family: 'Oswald', sans-serif; font-size: 13.5px; padding: 8px 10px; }
+.sb-name-input:focus { outline: none; border-color: var(--gold); }
+.sb-input-invalid { border-color: #c76a6a !important; }
+.sb-size-price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
 .sb-price-field { display: flex; flex-direction: column; gap: 4px; font-family: 'Inter', sans-serif; font-size: 11px; color: rgba(250,245,232,0.6); text-transform: uppercase; letter-spacing: 0.4px; }
 .sb-price-field-single { max-width: 160px; }
 .sb-price-input-wrap { display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1.5px solid rgba(250,245,232,0.2); border-radius: 6px; overflow: hidden; }
@@ -2432,6 +2491,10 @@ img { max-width: 100%; display: block; }
 .sb-price-input-wrap input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--offwhite); font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 8px 10px 8px 4px; }
 .sb-price-input-wrap input:focus { outline: none; }
 .sb-price-input-wrap:focus-within { border-color: var(--gold); }
+.sb-size-toggle { background: rgba(156,56,56,0.3); color: #e8a0a0; border: none; padding: 5px 10px; border-radius: 12px; font-family: 'Oswald', sans-serif; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; cursor: pointer; align-self: flex-start; }
+.sb-size-toggle.on { background: rgba(80,160,140,0.3); color: #8fe0c8; }
+.sb-size-chip-disabled { opacity: 0.45; }
+.sb-size-chip-disabled input { cursor: not-allowed; }
 
 .sb-report-range-picker { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .sb-range-pill { background: var(--teal-plank); border: 1.5px solid rgba(250,245,232,0.15); color: var(--offwhite); font-family: 'Oswald', sans-serif; text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.5px; padding: 8px 14px; border-radius: 16px; cursor: pointer; }
