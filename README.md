@@ -45,20 +45,12 @@ You should see:
 
 ```
 Seeded the database with a fresh admin account:
-  username: admin
-  password: ChangeMe123!
+  username: administrator
   IMPORTANT: log in and change this password immediately.
 Strata Sa'o Bitsa server listening on port 4000
 ```
 
-That's your first login — **change this password immediately** (tap
-**Change Password** in the staff dashboard header after logging in — see
-"Staff accounts" below). Data lives in Postgres from here on, so it
-survives restarts and redeploys — no local file to lose.
 
-Already have a local `server/data.json` from an earlier version of this
-project that you want to keep? Run `npm run migrate-local-data` once
-(after setting `DATABASE_URL`) to copy it into Postgres.
 
 ## 3. Run the website
 
@@ -90,10 +82,7 @@ they only serve files, not a persistent server or WebSocket connection.
 3. Set **Root Directory** to `server`.
 4. Build command: `npm install` — Start command: `npm start`.
 5. Add environment variables:
-   - `JWT_SECRET` — a long random string
-     (generate one with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
-   - `DATABASE_URL` — your Postgres connection string from step 1 above (Neon,
-     Render Postgres, Supabase, etc.).
+
 6. Deploy. You'll get a URL like `https://strata-server.onrender.com`.
 
 Note: Render's free tier "spins down" after inactivity, so the first
